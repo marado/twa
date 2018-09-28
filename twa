@@ -7,6 +7,65 @@ TWA_VERSION="1.4.0"
 TWA_TIMEOUT="${TWA_TIMEOUT:-5}"
 read -r -a TWA_CURLOPTS <<< "${TWA_CURLOPTS}"
 
+declare -A TWA_CODES=(
+  # Stage 0
+  [TWA-0001]="Expected port 443 to be open, but it isn't"
+
+  # Stage 1
+  [TWA-0101]="HTTP redirects to HTTPS using a 302"
+  [TWA-0102]="HTTP redirects to HTTP (not secure)"
+  [TWA-0103]="HTTP doesn't redirect at all"
+
+  # Stage 2
+  [TWA-0201]="Skipping security checks due to no secure channel"
+  [TWA-0202]="Strict-Transport-Security max-age is less than 6 months"
+  [TWA-0203]="Strict-Transport-Security, but no includeSubDomains"
+  [TWA-0204]="Strict-Transport-Security, but no preload"
+  [TWA-0205]="Strict-Transport-Security missing"
+  [TWA-0206]="X-Frame-Options is 'sameorigin', consider 'deny'"
+  [TWA-0207]="X-Frame-Options is 'allow-from', consider 'deny' or 'none'"
+  [TWA-0208]="X-Frame-Options missing"
+  [TWA-0209]="X-Content-Type-Options missing"
+  [TWA-0210]="X-XSS-Protection is '0'; XSS filtering disabled"
+  [TWA-0211]="X-XSS-Protection sanitizes but doesn't block, consider mode=block?"
+  [TWA-0212]="X-XSS-Protection missing"
+  [TWA-0213]="Referrer-Policy specifies '\${rp}', consider 'no-referrer'?"
+  [TWA-0214]="Referrer-Policy missing"
+  [TWA-0215]="Content-Security-Policy 'default-src' is '\${csp_default_src}'"
+  [TWA-0216]="Content-Security-Policy 'default-src' is missing"
+  [TWA-0217]="Content-Security-Policy has one or more 'unsafe-inline' policies"
+  [TWA-0218]="Content-Security-Policy has one or more 'unsafe-eval' policies"
+  [TWA-0219]="Content-Security-Policy missing"
+  [TWA-0220]="Feature-Policy missing"
+
+  # Stage 3
+  [TWA-0301]="Site sends 'Server' with what looks like a version tag: \${server}"
+  [TWA-0302]="Site sends a long 'Server', probably disclosing version info: \${server}"
+  [TWA-0303]="Site sends '\${badheader}, probably disclosing version info: \${content}'"
+
+  # Stage 4
+  [TWA-0401]="SCM repository being served at: \${url}"
+  [TWA-0402]="Possible SCM repository being served (maybe protected?) at: \${url}"
+  [TWA-0403]="Environment file being served at: \${url}"
+  [TWA-0404]="Possible environment file being served (maybe protected?) at: \${url}"
+
+  # Stage 5
+  [TWA-0501]="No robots file found at: \${domain}/robots.txt"
+
+  # Stage 6
+  [TWA-0601]="No CAA records found"
+  [TWA-0602]="Domain doesn't specify any valid issuers"
+  [TWA-0603]="Domain explicitly disallows all issuers"
+  [TWA-0604]="Domain doesn't specify any violation reporting endpoints"
+
+  # Stage 7
+  [TWA-0701]="Domain is listening on a development/backend port: \${dev_port}"
+)
+
+# If we're being sourced, stop execution here.
+# You can use this to read `TWA_CODES` above via `source` in other programs.
+[[ "${BASH_SOURCE[0]}" == "${0}" ]] || return
+
 # TTY check to prevent breaking scripts
 # Respect the "NO_COLOR spec"
 if [[ -t 1 && -z "${NO_COLOR}" ]]; then
@@ -85,17 +144,20 @@ function PASS {
 
 # MEH: A test passed, but with one or more things that could be improved.
 function MEH {
-  echo -e "${TWA_COLOR_BLUE}MEH${TWA_COLOR_RESET}(${domain}): $*"
+  msg=$(eval "echo \"${TWA_CODES[${1}]}\"")
+  echo -e "${TWA_COLOR_BLUE}MEH${TWA_COLOR_RESET}(${domain}): ${1}: ${msg}"
 }
 
 # FAIL: A test failed, and should be fixed.
 function FAIL {
-  echo -e "${TWA_COLOR_RED}FAIL${TWA_COLOR_RESET}(${domain}): $*"
+  msg=$(eval "echo \"${TWA_CODES[${1}]}\"")
+  echo -e "${TWA_COLOR_RED}FAIL${TWA_COLOR_RESET}(${domain}): ${1}: ${msg}"
 }
 
 # FATAL: A really important test failed, and should be fixed immediately.
 function FATAL {
-  echo -e "${TWA_COLOR_RED}FATAL${TWA_COLOR_RESET}(${domain}): $*"
+  msg=$(eval "echo \"${TWA_CODES[${1}]}\"")
+  echo -e "${TWA_COLOR_RED}FATAL${TWA_COLOR_RESET}(${domain}): ${1}: ${msg}"
 }
 
 # UNK: The server gave us something we didn't understand.
@@ -122,7 +184,7 @@ function stage_0_has_https {
 
   # First, just probe the domain to see if it listens on 443.
   if ! probe "${domain}" 443 ; then
-    FATAL "expected port 443 to be open, but it isn't"
+    FATAL TWA-0001
     no_https=1 ; return
   fi
 
@@ -166,14 +228,14 @@ function stage_1_redirection {
     if [[ "${response}" == 301 ]]; then
       PASS "HTTP redirects to HTTPS using a 301"
     elif [[ "${response}" == 302 ]]; then
-      MEH "HTTP redirects to HTTPS using a 302"
+      MEH TWA-0101
     else
       UNK "HTTP sends an HTTPS location but with a weird response code: ${response}"
     fi
   elif [[ "${location}" =~ ^http ]]; then
-    FAIL "HTTP redirects to HTTP (not secure)"
+    FAIL TWA-0102
   else
-    FAIL "HTTP doesn't redirect at all"
+    FAIL TWA-0103
   fi
 }
 
@@ -193,7 +255,7 @@ function stage_2_security_headers {
   verbose "Stage 2: Sane security headers"
 
   if [[ -n "${no_https}" ]]; then
-    FATAL "skipping security header checks due to no secure channel"
+    FATAL TWA-0201
     return
   fi
 
@@ -209,7 +271,7 @@ function stage_2_security_headers {
       if [[ "${sts_max_age}" -ge 15768000 ]]; then
         PASS "Strict-Transport-Security max-age is at least 6 months"
       else
-        MEH "Strict-Transport-Security max-age is less than 6 months"
+        MEH TWA-0202
       fi
     else
       UNK "Strict-Transport-Security received, but no max-age"
@@ -218,16 +280,16 @@ function stage_2_security_headers {
     if [[ -n "${sts_incl_subs}" ]]; then
       PASS "Strict-Transport-Security specifies includeSubDomains"
     else
-      MEH "Strict-Transport-Security, but no includeSubDomains"
+      MEH TWA-0203
     fi
 
     if [[ -n "${sts_preload}" ]]; then
       PASS "Strict-Transport-Security specifies preload"
     else
-      MEH "Strict-Transport-Security, but no preload"
+      MEH TWA-0204
     fi
   else
-    FAIL "Strict-Transport-Security missing"
+    FAIL TWA-0205
   fi
 
   xfo=$(get_header "X-Frame-Options" <<< "${headers}")
@@ -237,14 +299,14 @@ function stage_2_security_headers {
     if [[ "${xfo}" == "deny" ]]; then
       PASS "X-Frame-Options is 'deny'"
     elif [[ "${xfo}" == "sameorigin" ]]; then
-      MEH "X-Frame-Options is 'sameorigin', consider 'deny'?"
+      MEH TWA-0206
     elif [[ "${xfo}" =~ ^allow-from ]]; then
-      MEH "X-Frame-Options is 'allow-from', consider 'deny' or 'none'?"
+      MEH TWA-0207
     else
       UNK "X-Frame-Options set to something weird: ${xfo}"
     fi
   else
-    FAIL "X-Frame-Options missing"
+    FAIL TWA-0208
   fi
 
   xcto=$(get_header "X-Content-Type-Options" <<< "${headers}")
@@ -256,7 +318,7 @@ function stage_2_security_headers {
       UNK "X-Content-Type-Options set to something weird: ${xcto}"
     fi
   else
-    FAIL "X-Content-Type-Options missing"
+    FAIL TWA-0209
   fi
 
   xxp=$(get_header "X-XSS-Protection" <<< "${headers}")
@@ -264,16 +326,16 @@ function stage_2_security_headers {
 
   if [[ -n "${xxp}" ]]; then
     if [[ "${xxp}" == 0 ]]; then
-      FAIL "X-XSS-Protection is '0'; XSS filtering disabled"
+      FAIL TWA-0210
     elif [[ "${xxp}" =~ ^1 ]]; then
       if [[ "${xxp}" =~ mode=block ]]; then
         PASS "X-XSS-Protection specifies mode=block"
       else
-        MEH "X-XSS-Protection sanitizes but doesn't block, consider mode=block?"
+        MEH TWA-0211
       fi
     fi
   else
-    FAIL "X-XSS-Protection missing"
+    FAIL TWA-0212
   fi
 
   rp=$(get_header "Referrer-Policy" <<< "${headers}")
@@ -288,10 +350,10 @@ function stage_2_security_headers {
             || "${rp}" == "origin-when-cross-origin"
             || "${rp}" == "same-origin"
             || "${rp}" == "strict-origin" ]]; then
-      MEH "Referrer-Policy specifies '${rp}', consider 'no-referrer'?"
+      MEH TWA-0213
     fi
   else
-    FAIL "Referrer-Policy missing"
+    FAIL TWA-0214
   fi
 
   csp=$(get_header "Content-Security-Policy" <<< "${headers}")
@@ -302,21 +364,21 @@ function stage_2_security_headers {
       if [[ "${csp_default_src//\'}" == "none" ]]; then
         PASS "Content-Security-Policy 'default-src' is 'none'"
       else
-        MEH "Content-Security-Policy 'default-src' is ${csp_default_src}"
+        MEH TWA-0215
       fi
     else
-      FAIL "Content-Security-Policy 'default-src' is missing"
+      FAIL TWA-0216
     fi
 
     if [[ "${csp}" =~ unsafe-inline ]]; then
-      FAIL "Content-Security-Policy has one or more 'unsafe-inline' policies"
+      FAIL TWA-0217
     fi
 
     if [[ "${csp}" =~ unsafe-eval ]]; then
-      FAIL "Content-Security-Policy has one or more 'unsafe-eval' policies"
+      FAIL TWA-0218
     fi
   else
-    FAIL "Content-Security-Policy missing"
+    FAIL TWA-0219
   fi
 
   fp=$(get_header "Feature-Policy" <<< "${headers}")
@@ -324,7 +386,7 @@ function stage_2_security_headers {
   if [[ -n "${fp}" ]]; then
     SKIP "Feature-Policy checks not implemented yet"
   else
-    FAIL "Feature-Policy missing"
+    FAIL TWA-0220
   fi
 }
 
@@ -342,12 +404,12 @@ function stage_3_server_information_disclosure {
     server_wc=$(wc -w <<< "${server}")
     if [[ "${server_wc}" -le 1 ]]; then
       if [[ "${server}" == */* ]]; then
-        FAIL "Site sends 'Server' with what looks like a version tag: ${server}"
+        FAIL TWA-0301
       else
         PASS "Site sends 'Server', but probably only a vendor ID: ${server}"
       fi
     else
-      FAIL "Site sends a long 'Server', probably disclosing version info: ${server}"
+      FAIL TWA-0302
     fi
   else
     PASS "Site doesn't send 'Server' header"
@@ -357,7 +419,7 @@ function stage_3_server_information_disclosure {
     content=$(get_header "${badheader}" <<< "${headers}")
 
     if [[ -n "${content}" ]]; then
-      FAIL "Site sends '${badheader}', probably disclosing version info: ${content}"
+      FAIL TWA-0303
     else
       PASS "Site doesn't send '${badheader}'"
     fi
@@ -381,9 +443,9 @@ function stage_4_repo_and_env_disclosure {
     code=$(fetch_respcode "${url}")
 
     if [[ "${code}" -eq 200 ]]; then
-      FAIL "SCM repository being served at: ${url}"
+      FAIL TWA-0401
     elif [[ "${code}" -eq 403 ]]; then
-      MEH "Possible SCM repository being served (maybe protected?) at: ${url}"
+      MEH TWA-0402
     elif [[ "${code}" -eq 404 ]]; then
       PASS "No SCM repository at: ${url}"
     else
@@ -396,11 +458,11 @@ function stage_4_repo_and_env_disclosure {
     code=$(fetch_respcode "${url}")
 
     if [[ "${code}" -eq 200 ]]; then
-      FAIL "Environment file being served at: ${url}"
+      FAIL TWA-0403
     elif [[ "${code}" -eq 403 ]]; then
       MEH "Possible environment file being served (maybe protected?) at: ${url}"
     elif [[ "${code}" -eq 404 ]]; then
-      PASS "No environment file at: ${url}"
+      PASS TWA-0404
     else
       UNK "Got a weird response code (${code}) when testing for an environment file at: ${url}"
     fi
@@ -418,7 +480,7 @@ function stage_5_robots_check {
   if [[ "${code}" -eq 200 ]]; then
     PASS "Site provides robots.txt at: ${domain}/robots.txt"
   elif [[ "${code}" -eq 404 ]]; then
-    MEH "No robots file found at: ${domain}/robots.txt"
+    MEH TWA-0501
   else
     UNK "Got a weird response code (${code}) when testing for robots.txt at: ${domain}/robots.txt"
   fi
@@ -473,16 +535,16 @@ function stage_6_caa {
       fi
     done <<< "${records}"
   else
-    FAIL "No CAA records found"
+    FAIL TWA-0601
     return
   fi
 
   if [[ "${#issuers[@]}" -eq 0 ]]; then
-    FAIL "Domain doesn't specify any valid issuers"
+    FAIL TWA-0602
   elif [[ "${#issuers[@]}" -eq 1 && "${issuers[0]}" == ";" ]]; then
     # NOTE(ww): If every site should have HTTPS, then every domain should have CAA
     # record(s) that specify all valid issuers for certificates.
-    FAIL "Domain explicitly disallows all issuers"
+    FAIL TWA-0603
   else
     PASS "Domain explicitly allows one or more issuers: ${issuers[*]}"
   fi
@@ -495,7 +557,7 @@ function stage_6_caa {
   if [[ "${#iodefs[@]}" -eq 0 ]]; then
     # NOTE(ww): This could be a failure, but it's more of a reporting shortcoming
     # than a security/privacy issue.
-    MEH "Domain doesn't specify any violation reporting endpoints"
+    MEH TWA-0604
   else
     PASS "Domain specifies one or more reporting endpoints: ${iodefs[*]}"
   fi
@@ -521,7 +583,7 @@ function stage_7_open_development_ports {
 
   for dev_port in "${dev_ports[@]}"; do
     if probe "${domain}" "${dev_port}"; then
-      FAIL "Domain is listening on a development/backend port: ${dev_port}"
+      FAIL TWA-0701
     else
       PASS "Domain is not listening on a development/backend port: ${dev_port}"
     fi
