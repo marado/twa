@@ -460,9 +460,9 @@ function stage_4_repo_and_env_disclosure {
     if [[ "${code}" -eq 200 ]]; then
       FAIL TWA-0403
     elif [[ "${code}" -eq 403 ]]; then
-      MEH "Possible environment file being served (maybe protected?) at: ${url}"
+      MEH TWA-0404
     elif [[ "${code}" -eq 404 ]]; then
-      PASS TWA-0404
+      PASS "No environment file at: ${url}"
     else
       UNK "Got a weird response code (${code}) when testing for an environment file at: ${url}"
     fi
